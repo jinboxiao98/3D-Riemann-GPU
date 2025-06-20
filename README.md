@@ -59,19 +59,19 @@ sudo sh cuda_12.9.0_575.51.03_linux.ru
 
 This code solves the **3D compressible Euler equations** for inviscid gas dynamics:
 
-\[
+$$
 \frac{\partial \mathbf{U}}{\partial t} + \nabla \cdot \mathbf{F} = 0,
-\]
+$$
 
 where:
-- \(\mathbf{U}\) is the vector of conserved variables,
-- \(\mathbf{F} = (\mathbf{F}_x, \mathbf{F}_y, \mathbf{F}_z)\) are the flux vectors in \(x\), \(y\), and \(z\) directions.
+- $$\mathbf{U}$$ is the vector of conserved variables,
+- $$\mathbf{F} = (\mathbf{F}_x, \mathbf{F}_y, \mathbf{F}_z)$$ are the flux vectors in $$x$$, $$y$$, and $$z$$ directions.
 
 ---
 
 ## **Governing Equations**
 ### **Conserved Variables**
-\[
+$$
 \mathbf{U} = \begin{bmatrix}
 \rho \\
 \rho u \\
@@ -80,10 +80,10 @@ where:
 E
 \end{bmatrix}, \quad
 E = \rho e + \frac{1}{2}\rho (u^2 + v^2 + w^2)
-\]
+$$
 
 ### **Flux Vectors**
-\[
+$$
 \mathbf{F}_x = \begin{bmatrix}
 \rho u \\
 \rho u^2 + p \\
@@ -105,67 +105,71 @@ v (E + p)
 \rho w^2 + p \\
 w (E + p)
 \end{bmatrix}
-\]
+$$
 
-- \(\rho\): Density  
-- \(u, v, w\): Velocity components  
-- \(p\): Pressure (from equation of state: \(p = (\gamma - 1) \left[ E - \frac{1}{2}\rho (u^2 + v^2 + w^2) \right]\))  
-- \(\gamma = 1.4\): Ratio of specific heats  
+- $$\rho$$: Density  
+- $$u, v, w$$: Velocity components  
+- $$p$$: Pressure (from equation of state: $$p = (\gamma - 1) \left[ E - \frac{1}{2}\rho (u^2 + v^2 + w^2) \right]$$)  
+- $$\gamma = 1.4$$: Ratio of specific heats  
 
 ---
 
 ## **Numerical Method**  
-1. **Temporal Integration**: 3rd-order Runge-Kutta (RK3):  
-   \[
+1. **Temporal Integration**: 3rd-order Runge-Kutta (RK3):
+
+
+
+```math
    \begin{aligned}
    \mathbf{U}^{(1)} &= \mathbf{U}^n - \Delta t \, \nabla \cdot \mathbf{F}(\mathbf{U}^n), \\
    \mathbf{U}^{(2)} &= \frac{3}{4}\mathbf{U}^n + \frac{1}{4}\mathbf{U}^{(1)} - \frac{1}{4}\Delta t \, \nabla \cdot \mathbf{F}(\mathbf{U}^{(1)}), \\
    \mathbf{U}^{n+1} &= \frac{1}{3}\mathbf{U}^n + \frac{2}{3}\mathbf{U}^{(2)} - \frac{2}{3}\Delta t \, \nabla \cdot \mathbf{F}(\mathbf{U}^{(2)}).
    \end{aligned}
-   \]
+```
 
-2. **Spatial Discretization**: Finite-volume method with local Lax-Friedrichs (LLF) flux splitting.
+3. **Spatial Discretization**: Finite-volume method with local Lax-Friedrichs (LLF) flux splitting.
 
     ```C
     __global__ void compute_RHS
     ```
-    \[
+
+```math
     -\nabla \cdot \mathbf{F} =- \frac{\mathbf{F_x}_{i+\frac{1}{2},j,k} - \mathbf{F_x}_{i-\frac{1}{2},j,k}}{\Delta x}
                               - \frac{\mathbf{F_y}_{i,j+\frac{1}{2},k} - \mathbf{F_y}_{i,j-\frac{1}{2},k}}{\Delta y}
                               - \frac{\mathbf{F_z}_{i,j,k+\frac{1}{2}} - \mathbf{F_z}_{i,j,k-\frac{1}{2}}}{\Delta z}
-    \]
-    where
-    \[
+```
+where
+```math
     \mathbf{F_x}_{i+\frac{1}{2},j,k} = \mathbf{F_x}^{+}_{i+\frac{1}{2},j,k} + \mathbf{F_x}^{-}_{i+\frac{1}{2},j,k},
-    \]
-    and $\mathbf{F}^{+}_{i+\frac{1}{2},j,k}$ represents the flux from left to right, $\mathbf{F}^{-}_{i+\frac{1}{2},j,k}$ represents the flux from right to left.
+```
+and $$\mathbf{F}^{+}_{i+\frac{1}{2},j,k}$$ represents the flux from left to right, $$\mathbf{F}^{-}_{i+\frac{1}{2},j,k}$$ represents the flux from right to left.
 
 
-    ```C
-    __global__ void reconstruct_interface_flux
-    ```
-    \[
+```C
+__global__ void reconstruct_interface_flux
+```
+```math
     \begin{aligned}
     \mathbf{F}^{+}_{i+\frac{1}{2}} = \textbf{Minmod}(\mathbf{F}^{+}_{i-1}, \mathbf{F}^{+}_{i}, \mathbf{F}^{+}_{i+1}) \\
     \mathbf{F}^{-}_{i+\frac{1}{2}} = \textbf{Minmod}(\mathbf{F}^{-}_{i+2}, \mathbf{F}^{-}_{i+1}, \mathbf{F}^{-}_{i})
     \end{aligned}
-    \]
+```
 
 
-    ```C
+```C
     __global__ void flux_vector_splitting
-    ```
-    \[
+```
+```math
     \begin{aligned}
     \mathbf{F}^{+}_{i} = \mathbf{F}_i + \lambda_i \mathbf{U}_i \\
     \mathbf{F}^{-}_{i} = \mathbf{F}_i - \lambda_i \mathbf{U}_i
     \end{aligned}
-    \]
+```
 
-    ```C
+```C
     __global__ void compute_primitive_vars_fluxes
-    ```
-    \[
+```
+```math
     \begin{aligned}
     c_i = \sqrt{\gamma p_i/\rho_i} \\
     \lambda_{x,i} = |u_i| + c_i \\
@@ -173,7 +177,7 @@ w (E + p)
     \lambda_{z,i} = |w_i| + c_i \\
     \lambda_{i} = \max(\lambda_{x,i}, \lambda_{y,i}, \lambda_{z,i})
     \end{aligned}
-    \]
+```
 ---
 
 
