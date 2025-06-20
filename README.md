@@ -8,34 +8,6 @@ If you are using a personal computer with an NVIDIA GeForce RTX 4090 GPU, you ca
 ```bash
 nvcc -arch sm_89 -o case_number_and_mesh_number 3DRiemann.cu
 ```
-If you are using PACE, the batch file, ```riemann.sh```, is
-```bash
-#!/bin/bash
-#SBATCH -J Riemann
-#SBATCH -A gts-vyang6-coda20
-#SBATCH -N1 --gres=gpu:1 -C A100-40GB
-#SBATCH -t 1:00:00
-#SBATCH -q inferno
-#SBATCH -o Report-%j.out
-#SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --mail-user=bjin60@gatech.edu
-
-cd $SLURM_SUBMIT_DIR
-module load gcc/12.3.0
-module load cuda/12.1.1
-module load mvapich2/2.3.7-1
-
-cd /storage/home/hcoda1/9/bjin60/p-vyang6-0/Riemann
-
-nvcc -arch sm_80 -o case_number_and_mesh_number 3dRiemann.cu
-
-srun -n 1 ./case_number_and_mesh_number
-```
-The batch file can be executed by
-```bash
-sbatch riemann.sh
-```
-
 
 The gcc version is 11.4.0 on my personal computer, which can be checked by ```gcc --version```.
 
