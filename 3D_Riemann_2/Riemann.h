@@ -18,6 +18,67 @@ double UPWIND(
     return u_up;
 }
 
+__device__ static inline
+double WENO3rd(
+    const double u_up2, const double u_up, const double u_down
+) {
+    // Small constant to avoid division by zero
+    const double epsilon = 1e-6;
+
+    // 1. Reconstruct values for each stencil
+    double f0 = 0.5 * u_up2 + 0.5 * u_up;   // Stencil S0: {f_{i-1}, f_i}
+    double f1 = -0.5 * u_up + 1.5 * u_down; // Stencil S1: {f_i, f_{i+1}}
+
+    // 2. Compute smoothness indicators (beta_k)
+    double beta0 = pow(u_up - u_up2, 2);     // (f_i - f_{i-1})^2
+    double beta1 = pow(u_down - u_up, 2);    // (f_{i+1} - f_i)^2
+
+    // 3. Compute weights (alpha_k and omega_k)
+    double alpha0 = 1.0/3.0 / pow(beta0 + epsilon, 2);  // C0 = 1/3
+    double alpha1 = 2.0/3.0 / pow(beta1 + epsilon, 2);  // C1 = 2/3
+
+    double sum_alpha = alpha0 + alpha1;
+    double omega0 = alpha0 / sum_alpha;
+    double omega1 = alpha1 / sum_alpha;
+
+    // 4. Combine the reconstructions
+    return omega0 * f0 + omega1 * f1;
+}
+
+__device__ static inline
+double WENO5th(
+    const double u_up3, const double u_up2, const double u_up, const double u_down, const double u_down2
+) {
+    // Small constant to avoid division by zero
+    const double epsilon = 1e-8;
+
+    // 1. Reconstruct values for each stencil
+    double f0 = (1.0/3.0)*u_up3 - (7.0/6.0)*u_up2 + (11.0/6.0)*u_up;  // Stencil S0
+    double f1 = (-1.0/6.0)*u_up2 + (5.0/6.0)*u_up + (1.0/3.0)*u_down;   // Stencil S1
+    double f2 = (1.0/3.0)*u_up + (5.0/6.0)*u_down - (1.0/6.0)*u_down2;  // Stencil S2
+
+    // 2. Compute smoothness indicators (beta_k)
+    double beta0 = 13.0/12.0 * pow(u_up3 - 2.0*u_up2 + u_up, 2) 
+                 + 1.0/4.0 * pow(u_up3 - 4.0*u_up2 + 3.0*u_up, 2);
+    double beta1 = 13.0/12.0 * pow(u_up2 - 2.0*u_up + u_down, 2) 
+                 + 1.0/4.0 * pow(u_up2 - u_down, 2);
+    double beta2 = 13.0/12.0 * pow(u_up - 2.0*u_down + u_down2, 2) 
+                 + 1.0/4.0 * pow(3*u_up - 4.0*u_down + u_down2, 2);
+
+    // 3. Compute weights (alpha_k and omega_k)
+    double alpha0 = 0.1 / pow(beta0 + epsilon, 2);  // C0 = 0.1
+    double alpha1 = 0.6 / pow(beta1 + epsilon, 2);  // C1 = 0.6
+    double alpha2 = 0.3 / pow(beta2 + epsilon, 2);  // C2 = 0.3
+
+    double sum_alpha = alpha0 + alpha1 + alpha2;
+    double omega0 = alpha0 / sum_alpha;
+    double omega1 = alpha1 / sum_alpha;
+    double omega2 = alpha2 / sum_alpha;
+
+    // 4. Combine the reconstructions
+    return omega0 * f0 + omega1 * f1 + omega2 * f2;
+}
+
 // 1. Use U to compute primitive variables, [rho, u, v, w, p]
 // 2. Use U and primitive variables to compute fluxes, lambda
 __global__ void compute_primitive_vars_fluxes(
@@ -71,7 +132,9 @@ __global__ void compute_primitive_vars_fluxes(
     const double lambda_y = fabs(W_v) + speed_of_sound;
     const double lambda_z = fabs(W_w) + speed_of_sound;
 
-    lambda[idx] = fmax(fmax(lambda_x, lambda_y), lambda_z);
+    // lambda[idx] = fmax(fmax(lambda_x, lambda_y), lambda_z);
+    // lambda[idx] = sqrt(lambda_x * lambda_x + lambda_y * lambda_y + lambda_z * lambda_z);
+    lambda[idx] = lambda_x + lambda_y + lambda_z;
 
 }
 
@@ -127,19 +190,28 @@ __global__ void reconstruct_interface_flux(
     const int nFace = (NX+2*BUFFER)*(NZ+2*BUFFER);
     const int nLine = (NX+2*BUFFER);
 
-    Fx_half_plus[idx] = MINMOD( Fx_plus[idx-1],     Fx_plus[idx], Fx_plus[idx+1]     );
-    Fy_half_plus[idx] = MINMOD( Fy_plus[idx-nFace], Fy_plus[idx], Fy_plus[idx+nFace] );
-    Fz_half_plus[idx] = MINMOD( Fz_plus[idx-nLine], Fz_plus[idx], Fz_plus[idx+nLine] );
+    // Fx_half_plus[idx] = MINMOD( Fx_plus[idx-1],     Fx_plus[idx], Fx_plus[idx+1]     );
+    // Fy_half_plus[idx] = MINMOD( Fy_plus[idx-nFace], Fy_plus[idx], Fy_plus[idx+nFace] );
+    // Fz_half_plus[idx] = MINMOD( Fz_plus[idx-nLine], Fz_plus[idx], Fz_plus[idx+nLine] );
 
-    Fx_half_minus[idx] = MINMOD( Fx_minus[idx+1],     Fx_minus[idx], Fx_minus[idx-1]     );
-    Fy_half_minus[idx] = MINMOD( Fy_minus[idx+nFace], Fy_minus[idx], Fy_minus[idx-nFace] );
-    Fz_half_minus[idx] = MINMOD( Fz_minus[idx+nLine], Fz_minus[idx], Fz_minus[idx-nLine] );
+    Fx_half_plus[idx] = WENO5th( Fx_plus[idx-2],       Fx_plus[idx-1],     Fx_plus[idx], Fx_plus[idx+1],     Fx_plus[idx+2]       );
+    Fy_half_plus[idx] = WENO5th( Fy_plus[idx-2*nFace], Fy_plus[idx-nFace], Fy_plus[idx], Fy_plus[idx+nFace], Fy_plus[idx+2*nFace] );
+    Fz_half_plus[idx] = WENO5th( Fz_plus[idx-2*nLine], Fz_plus[idx-nLine], Fz_plus[idx], Fz_plus[idx+nLine], Fz_plus[idx+2*nLine] );
+
+    // Fx_half_minus[idx] = MINMOD( Fx_minus[idx+1],     Fx_minus[idx], Fx_minus[idx-1]     );
+    // Fy_half_minus[idx] = MINMOD( Fy_minus[idx+nFace], Fy_minus[idx], Fy_minus[idx-nFace] );
+    // Fz_half_minus[idx] = MINMOD( Fz_minus[idx+nLine], Fz_minus[idx], Fz_minus[idx-nLine] );
+
+    Fx_half_minus[idx] = WENO5th( Fx_minus[idx+2],       Fx_minus[idx+1],     Fx_minus[idx], Fx_minus[idx-1],     Fx_minus[idx-2]       );
+    Fy_half_minus[idx] = WENO5th( Fy_minus[idx+2*nFace], Fy_minus[idx+nFace], Fy_minus[idx], Fy_minus[idx-nFace], Fy_minus[idx-2*nFace] );
+    Fz_half_minus[idx] = WENO5th( Fz_minus[idx+2*nLine], Fz_minus[idx+nLine], Fz_minus[idx], Fz_minus[idx-nLine], Fz_minus[idx-2*nLine] );
 
 }
 
 __global__ void compute_RHS(
     const double* __restrict__ const Fx_half_plus,  const double* __restrict__ const Fy_half_plus,  const double* __restrict__ const Fz_half_plus,
     const double* __restrict__ const Fx_half_minus, const double* __restrict__ const Fy_half_minus, const double* __restrict__ const Fz_half_minus,
+    const double* __restrict__ const U,             const double* __restrict__ const lambda,
           double* __restrict__ const RHS
 ) {
     const int i = blockIdx.x*blockDim.x + threadIdx.x;
@@ -161,13 +233,13 @@ __global__ void compute_RHS(
     const double dy = (Y_MAX - Y_MIN) / (double)(NY - 1);
     const double dz = (Z_MAX - Z_MIN) / (double)(NZ - 1);
 
-    const double Fx_half_front = Fx_half_plus[idx] + Fx_half_minus[idx+1];
-    const double Fy_half_right = Fy_half_plus[idx] + Fy_half_minus[idx+nFace];
-    const double Fz_half_up    = Fz_half_plus[idx] + Fz_half_minus[idx+nLine];
+    const double Fx_half_front = Fx_half_plus[idx] + Fx_half_minus[idx+1]     - 0.015 * lambda[idx] * ( U[idx+1] - U[idx] );
+    const double Fy_half_right = Fy_half_plus[idx] + Fy_half_minus[idx+nFace] - 0.015 * lambda[idx] * ( U[idx+nFace] - U[idx] );
+    const double Fz_half_up    = Fz_half_plus[idx] + Fz_half_minus[idx+nLine] - 0.015 * lambda[idx] * ( U[idx+nLine] - U[idx] );
 
-    const double Fx_half_back  = Fx_half_plus[idx-1]     + Fx_half_minus[idx];
-    const double Fy_half_left  = Fy_half_plus[idx-nFace] + Fy_half_minus[idx];
-    const double Fz_half_down  = Fz_half_plus[idx-nLine] + Fz_half_minus[idx];
+    const double Fx_half_back  = Fx_half_plus[idx-1]     + Fx_half_minus[idx] - 0.015 * lambda[idx] * ( U[idx] - U[idx-1] );
+    const double Fy_half_left  = Fy_half_plus[idx-nFace] + Fy_half_minus[idx] - 0.015 * lambda[idx] * ( U[idx] - U[idx-nFace] );
+    const double Fz_half_down  = Fz_half_plus[idx-nLine] + Fz_half_minus[idx] - 0.015 * lambda[idx] * ( U[idx] - U[idx-nLine] );
 
     RHS[idx] = - (Fx_half_front - Fx_half_back) / dx - (Fy_half_right - Fy_half_left) / dy - (Fz_half_up - Fz_half_down) / dz;
 
@@ -217,6 +289,7 @@ void ComputeRHS(
         compute_RHS<<< grid, block, 0, stream[i] >>>(
             Fx_half_plus[i],  Fy_half_plus[i],  Fz_half_plus[i],
             Fx_half_minus[i], Fy_half_minus[i], Fz_half_minus[i],
+            U[i], lambda,
             RHS[i]
         );
         CHECK_CUDA( cudaGetLastError() );
